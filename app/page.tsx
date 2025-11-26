@@ -1,12 +1,26 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AutoMeter from "@/components/AutoMeter";
+import EyeIcon from "@/components/EyeIcon";
 import { analyze } from "@/lib/strength";
+import {
+  calculateEntropy,
+  checkCommonPassword,
+  checkOwaspRules
+} from "@/lib/passwordInsights";
 
 export default function Page() {
   const [pw, setPw] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const result = useMemo(() => analyze(pw), [pw]);
+  const entropyInfo = useMemo(() => calculateEntropy(pw), [pw]);
+  const commonInfo = useMemo(() => checkCommonPassword(pw), [pw]);
+  const owaspInfo = useMemo(() => checkOwaspRules(pw), [pw]);
+  const [pwnedInfo, setPwnedInfo] = useState<{
+    status: "idle" | "checking" | "safe" | "pwned" | "error";
+    count?: number;
+    message?: string;
+  }>({ status: "idle" });
 
   // Password Generator states
   const [length, setLength] = useState(16);
@@ -15,6 +29,90 @@ export default function Page() {
   const [includeSpecial, setIncludeSpecial] = useState(true);
   const [generatedPassword, setGeneratedPassword] = useState("");
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!pw) {
+      setPwnedInfo({ status: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setPwnedInfo({ status: "checking" });
+
+    const timer = setTimeout(async () => {
+      try {
+        const hash = await sha1Hex(pw);
+        const prefix = hash.slice(0, 5);
+        const suffix = hash.slice(5);
+        const response = await fetch(`/api/hibp?prefix=${prefix}`, {
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error("Không thể truy vấn HIBP");
+        const text = await response.text();
+        if (cancelled) return;
+        const matchLine = text
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.startsWith(suffix));
+        const count = matchLine ? parseInt(matchLine.split(":")[1], 10) || 0 : 0;
+        setPwnedInfo(
+          count > 0
+            ? { status: "pwned", count }
+            : { status: "safe", count: 0 }
+        );
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error("HIBP check failed:", error);
+        setPwnedInfo({
+          status: "error",
+          message: "Không kiểm tra được rò rỉ. Thử lại sau."
+        });
+      }
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [pw]);
+
+  const advancedHints = useMemo(() => {
+    if (!pw) return [];
+    const hints = [...result.reasons];
+    if (entropyInfo.bits > 0 && entropyInfo.bits < 60) {
+      hints.push(
+        "Entropy thấp (<60 bit). Tăng độ dài và đa dạng ký tự để khó đoán hơn."
+      );
+    }
+    if (commonInfo.isCommon) {
+      hints.push(
+        `Mật khẩu nằm trong danh sách phổ biến (Top ${commonInfo.rank}). Hãy chọn chuỗi độc nhất.`
+      );
+    }
+    if (pwnedInfo.status === "pwned" && pwnedInfo.count) {
+      hints.push(
+        `Mật khẩu đã bị rò rỉ ${pwnedInfo.count.toLocaleString()} lần. Tuyệt đối không tái sử dụng.`
+      );
+    }
+    if (owaspInfo.violations.length) {
+      hints.push(...owaspInfo.violations);
+    }
+    if (pw.length < 16) {
+      hints.push("Nên đặt mật khẩu tối thiểu 16 ký tự theo khuyến nghị NIST.");
+    }
+    return Array.from(new Set(hints));
+  }, [
+    pw,
+    result.reasons,
+    entropyInfo.bits,
+    commonInfo.isCommon,
+    commonInfo.rank,
+    pwnedInfo.status,
+    pwnedInfo.count,
+    owaspInfo.violations
+  ]);
 
   const generatePassword = () => {
     const lowercase = "abcdefghijklmnopqrstuvwxyz";
@@ -97,16 +195,8 @@ export default function Page() {
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 rounded px-2 py-1"
                 aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
               >
-                {showPassword ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                  </svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                )}
+                <EyeIcon open={showPassword} />
+
               </button>
             </div>
             {pw && <AutoMeter score={result.score} label={result.label} />}
@@ -129,6 +219,84 @@ export default function Page() {
             Mẹo: dùng cụm từ dài, thêm chữ hoa, số và ký tự đặc biệt để tăng độ
             mạnh.
           </p>
+
+          {pw && (
+            <div className="mt-10 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <h3 className="text-base font-semibold text-slate-800">
+                  Phân tích nâng cao
+                </h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="font-medium text-slate-600">Entropy</dt>
+                    <dd className="text-right text-slate-900">
+                      {entropyInfo.bits.toFixed(2)} bit ({entropyInfo.classification})
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="font-medium text-slate-600">
+                      Kiểm tra rò rỉ (HIBP)
+                    </dt>
+                    <dd className="text-right text-slate-900">
+                      {pwnedInfo.status === "checking" && "Đang kiểm tra..."}
+                      {pwnedInfo.status === "idle" && "Nhập mật khẩu để kiểm tra."}
+                      {pwnedInfo.status === "safe" &&
+                        "Không tìm thấy trong dữ liệu rò rỉ."}
+                      {pwnedInfo.status === "error" && pwnedInfo.message}
+                      {pwnedInfo.status === "pwned" &&
+                        `Bị rò rỉ ${pwnedInfo.count?.toLocaleString()} lần!`}
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="font-medium text-slate-600">
+                      Mật khẩu phổ biến
+                    </dt>
+                    <dd className="text-right text-slate-900">
+                      {commonInfo.isCommon
+                        ? `Có trong top phổ biến (#${commonInfo.rank})`
+                        : "Không trùng danh sách phổ biến."}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="font-medium text-slate-600">Quy tắc OWASP</dt>
+                    <dd className="mt-1 text-sm text-slate-900">
+                      {owaspInfo.violations.length === 0 ? (
+                        "Không vi phạm quy tắc nào."
+                      ) : (
+                        <ul className="list-disc list-inside space-y-1">
+                          {owaspInfo.violations.map((item, index) => (
+                            <li key={index}>{item}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-[0_15px_40px_rgba(15,34,58,0.08)]">
+                <h3 className="text-base font-semibold text-slate-800">
+                  Gợi ý cải thiện
+                </h3>
+                {advancedHints.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-600">
+                    Tuyệt vời! Mật khẩu đã đáp ứng các tiêu chí chính.
+                  </p>
+                ) : (
+                  <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                    {advancedHints.map((hint, index) => (
+                      <li
+                        key={index}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                      >
+                        {hint}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Password Generator Section */}
@@ -301,4 +469,12 @@ export default function Page() {
       </div>
     </div>
   );
+}
+
+async function sha1Hex(value: string) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(value);
+  const hashBuffer = await crypto.subtle.digest("SHA-1", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
 }

@@ -63,10 +63,29 @@ export async function POST(request: NextRequest) {
       { message: "Đăng ký thành công", email: user.email },
       { status: 200 }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error("Register error:", error);
+    
+    // Provide more specific error messages
+    if (error?.code === "P2002") {
+      return NextResponse.json(
+        { error: "Email này đã được sử dụng" },
+        { status: 400 }
+      );
+    }
+    
+    if (error?.code === "P1001" || error?.message?.includes("Can't reach database")) {
+      return NextResponse.json(
+        { error: "Không thể kết nối database. Vui lòng thử lại sau." },
+        { status: 500 }
+      );
+    }
+    
     return NextResponse.json(
-      { error: "Có lỗi xảy ra khi xử lý yêu cầu" },
+      { 
+        error: "Có lỗi xảy ra khi xử lý yêu cầu",
+        details: process.env.NODE_ENV === "development" ? error?.message : undefined
+      },
       { status: 500 }
     );
   }

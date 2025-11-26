@@ -3,7 +3,6 @@ import { useState, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import EyeIcon from "@/components/EyeIcon";
-import EyeIcon from "@/components/EyeIcon";
 
 interface FormErrors {
   email?: string;

@@ -3,6 +3,7 @@ import { useState, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import EyeIcon from "@/components/EyeIcon";
+import EyeIcon from "@/components/EyeIcon";
 
 interface FormErrors {
   email?: string;
@@ -60,11 +61,21 @@ export default function LoginPage() {
       });
 
       if (response.ok) {
+        try {
+          window.localStorage.setItem(
+            "pwdCheckerUser",
+            JSON.stringify({ email: email.toLowerCase() })
+          );
+          window.dispatchEvent(new CustomEvent("pwd-checker:user-change"));
+        } catch (storageError) {
+          console.error("Không thể lưu thông tin người dùng:", storageError);
+        }
+
         setSubmitSuccess(true);
-        setEmail("");
-        setPassword("");
-        // Redirect to home page after 1.5 seconds
+        // Delay clearing email để lưu trữ xong
         setTimeout(() => {
+          setEmail("");
+          setPassword("");
           router.push("/");
         }, 1500);
       } else {
@@ -170,7 +181,6 @@ export default function LoginPage() {
                 aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
               >
                 <EyeIcon open={showPassword} />
-
               </button>
             </div>
             {errors.password && (
